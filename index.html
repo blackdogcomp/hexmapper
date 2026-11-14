@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <title>Hex Sketcher</title>
 <style>
-:root{--bg:#1d1e23;--panel:#292b32;--txt:#e9e6df;--acc:#d9a441;--mut:#9a9aa5;--line:#41444e}
+:root{--bg:#1d1e23;--panel:#292b32;--txt:#e9e6df;--acc:#d9a441;--mut:#9a9aa5;--line:#41444e;
+  --btn:#373a43;--btnh:#444853;--on:#1d1e23;--field:#1d1e23;--stat-bg:rgba(0,0,0,.62);--stat-tx:#ddd}
+/* extra colour themes for the editor: white on black, black on white */
+html[data-theme=bw]{--bg:#000;--panel:#0d0d0d;--txt:#e6e6e6;--acc:#fff;--mut:#8a8a8a;--line:#3a3a3a;--btn:#1a1a1a;--btnh:#2c2c2c;--on:#000;--field:#000}
+html[data-theme=wb]{--bg:#fff;--panel:#f6f6f3;--txt:#1a1a1a;--acc:#1a1a1a;--mut:#6a6a6a;--line:#c9c9c5;--btn:#ececE8;--btnh:#dcdcd8;--on:#fff;--field:#fff;--stat-bg:rgba(255,255,255,.88);--stat-tx:#1a1a1a}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--txt);display:flex;overflow:hidden}
@@ -12,27 +16,27 @@ aside{width:236px;background:var(--panel);padding:12px 12px 20px;overflow-y:auto
 h1{font-size:17px;margin:2px 0 8px;color:var(--acc);letter-spacing:.5px}
 h2{font-size:11px;text-transform:uppercase;color:var(--mut);margin:16px 0 6px;letter-spacing:1px;font-weight:600}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-button{background:#373a43;color:var(--txt);border:1px solid var(--line);border-radius:5px;padding:6px 7px;cursor:pointer;font:inherit;font-size:13px;text-align:left;display:flex;align-items:center;gap:6px}
-button:hover{background:#444853}
-button.on{background:var(--acc);color:#1d1e23;border-color:var(--acc);font-weight:600}
+button{background:var(--btn);color:var(--txt);border:1px solid var(--line);border-radius:5px;padding:6px 7px;cursor:pointer;font:inherit;font-size:13px;text-align:left;display:flex;align-items:center;gap:6px}
+button:hover{background:var(--btnh)}
+button.on{background:var(--acc);color:var(--on);border-color:var(--acc);font-weight:600}
 button kbd{margin-left:auto;opacity:.55;font:11px ui-monospace,monospace}
 .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.4);flex-shrink:0}
 .row{display:flex;gap:4px;align-items:center;margin:5px 0}
 .row button{flex:1;justify-content:center}
 .row label{color:var(--mut);font-size:12px}
-input[type=number],select{background:#1d1e23;color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:4px 5px;font:inherit;font-size:13px}
+input[type=number],select{background:var(--field);color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:4px 5px;font:inherit;font-size:13px}
 input[type=number]{width:54px}
 select{flex:1}
 main{flex:1;position:relative;min-width:0}
 canvas{display:block;width:100%;height:100%;cursor:crosshair}
-#status{position:absolute;bottom:8px;left:10px;background:rgba(0,0,0,.62);padding:4px 9px;border-radius:4px;font-size:12px;color:#ddd;pointer-events:none}
+#status{position:absolute;bottom:8px;left:10px;background:var(--stat-bg);padding:4px 9px;border-radius:4px;font-size:12px;color:var(--stat-tx);pointer-events:none}
 .help{font-size:12px;color:var(--mut);line-height:1.55}
 .help b{color:var(--txt);font-weight:600}
 </style>
 </head>
 <body>
 <aside>
-  <h1>⬡ Hex Sketcher</h1>
+  <h1>⬡ Hex Sketcher <span style="font-size:11px;color:var(--mut);font-weight:400;letter-spacing:0">v1.2</span></h1>
 
   <h2>Terrain</h2>
   <div class="grid2" id="terrains"></div>
@@ -65,6 +69,8 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair}
   </div>
   <div class="row"><label><input type="checkbox" id="showSym" checked> Terrain symbols</label></div>
   <div class="row"><label><input type="checkbox" id="showNum" checked> Hex numbers</label></div>
+
+  <div class="row"><label>Colors</label><button id="bTheme" title="Editor colours: original, white on black, black on white">Original</button></div>
 
   <h2>File</h2>
   <div class="row"><button id="save">Save .json</button><button id="load">Open…</button></div>
@@ -184,7 +190,7 @@ function resizeCanvas(){
   const dpr = window.devicePixelRatio || 1;
   W = cv.clientWidth; H = cv.clientHeight;
   cv.width = Math.round(W*dpr); cv.height = Math.round(H*dpr);
-  ctx.setTransform(dpr,0,0,dpr,0,0); draw();
+  ctx.setTransform(dpr,0,0,dpr,0,0); DPR = dpr; draw();
 }
 window.addEventListener('resize', resizeCanvas);
 
@@ -276,7 +282,7 @@ function drawMarker(g, m, cx, cy, s){
 }
 
 function render(g, VW, VH, s, vx, vy, editor){
-  g.fillStyle = editor ? '#26282e' : '#ffffff'; g.fillRect(0,0,VW,VH);
+  g.fillStyle = editor ? ({orig:'#26282e', bw:'#000000', wb:'#e9e9e5'})[theme] : '#ffffff'; g.fillRect(0,0,VW,VH);
   for(let r=0;r<M.rows;r++) for(let c=0;c<M.cols;c++){
     const [cx,cy] = center(c,r,s,vx,vy);
     if(cx < -s*2 || cy < -s*2 || cx > VW+s*2 || cy > VH+s*2) continue;
@@ -300,13 +306,32 @@ function render(g, VW, VH, s, vx, vy, editor){
   }
 }
 
-function draw(){
+// The map itself is rendered into an off-screen picture (cache) only when it changes.
+// Moving the mouse just redraws that picture with the highlight on top, at most once per frame.
+let DPR = 1, rafId = 0, needFull = true;
+const cache = document.createElement('canvas'), cctx = cache.getContext('2d');
+function draw(overlayOnly){
+  if(!overlayOnly) needFull = true;
+  if(!rafId) rafId = requestAnimationFrame(paint);
+}
+function paint(){
+  rafId = 0;
   if(!W) return;
-  render(ctx, W, H, R, ox, oy, true);
+  if(needFull || cache.width!==cv.width || cache.height!==cv.height){
+    if(cache.width!==cv.width) cache.width = cv.width;
+    if(cache.height!==cv.height) cache.height = cv.height;
+    cctx.setTransform(DPR,0,0,DPR,0,0);
+    render(cctx, W, H, R, ox, oy, true);
+    needFull = false;
+  }
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(cache,0,0); ctx.restore();
   if(hover && inB(hover.c,hover.r) && !pan){
     const rad = (tool==='paint' || tool==='erase') && !marker ? brush : 0;
-    ctx.strokeStyle = '#d9a441'; ctx.lineWidth = 2.5;
-    within(hover.c, hover.r, rad).forEach(h => { const [cx,cy] = center(h.c,h.r,R,ox,oy); hexPath(ctx,cx,cy,R-1.5); ctx.stroke(); });
+    // in the black & white themes: a black line with a white edge, so it shows on any terrain
+    const passes = mono() ? [['#fff',5],['#000',1.8]] : [['#d9a441',2.5]];
+    const cells = within(hover.c, hover.r, rad);
+    passes.forEach(([col,lw]) => { ctx.strokeStyle = col; ctx.lineWidth = lw;
+      cells.forEach(h => { const [cx,cy] = center(h.c,h.r,R,ox,oy); hexPath(ctx,cx,cy,R-1.5); ctx.stroke(); }); });
   }
   updateStatus();
 }
@@ -379,10 +404,12 @@ window.addEventListener('mousemove', e => {
   const b = cv.getBoundingClientRect();
   const inside = e.clientX>=b.left && e.clientX<=b.right && e.clientY>=b.top && e.clientY<=b.bottom;
   const h = hexAt(e);
+  if(lastMove && lastMove.c===h.c && lastMove.r===h.r && lastMove.inside===inside) return; // same hex: nothing to redraw
+  lastMove = {c:h.c, r:h.r, inside};
   hover = inside ? h : null;
-  if(painting) paintAt(h);
-  draw();
+  if(painting){ paintAt(h); draw(); } else draw(true);
 });
+let lastMove = null;
 window.addEventListener('mouseup', () => {
   if(pan){
     if(!pan.moved && pan.btn===2 && inB(pan.hex.c,pan.hex.r)){
@@ -393,7 +420,7 @@ window.addEventListener('mouseup', () => {
   }
   if(painting){ painting = false; changed(); }
 });
-cv.addEventListener('mouseleave', () => { hover = null; draw(); });
+cv.addEventListener('mouseleave', () => { hover = null; lastMove = null; draw(true); });
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const b = cv.getBoundingClientRect(), mx = e.clientX-b.left, my = e.clientY-b.top;
@@ -402,15 +429,15 @@ cv.addEventListener('wheel', e => {
 }, {passive:false});
 window.addEventListener('keydown', e => {
   if(e.target.tagName==='INPUT' || e.target.tagName==='SELECT') return;
-  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
-  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); doRedo(); return; }
-  if(e.key===' '){ spaceDown = true; if(!pan) cv.style.cursor = 'grab'; e.preventDefault(); return; }
+  if((e.ctrlKey||e.metaKey) && e.code==='KeyZ'){ e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); return; }
+  if((e.ctrlKey||e.metaKey) && e.code==='KeyY'){ e.preventDefault(); doRedo(); return; }
+  if(e.code==='Space'){ spaceDown = true; if(!pan) cv.style.cursor = 'grab'; e.preventDefault(); return; }
   if(e.ctrlKey||e.metaKey||e.altKey) return;
-  const t = TERRAIN.find(t => t.k===e.key); if(t){ setTerrain(t.id); return; }
-  const tl = TOOLS.find(t => t[2]===e.key.toUpperCase()); if(tl) setTool(tl[0]);
+  const t = TERRAIN.find(t => e.code==='Digit'+t.k || e.code==='Numpad'+t.k); if(t){ setTerrain(t.id); return; }
+  const tl = TOOLS.find(t => e.code==='Key'+t[2]); if(tl) setTool(tl[0]); // by key position, so it also works on a Hebrew layout
   if(e.key==='Escape') setMarker(null);
 });
-window.addEventListener('keyup', e => { if(e.key===' '){ spaceDown = false; if(!pan) cv.style.cursor = 'crosshair'; } });
+window.addEventListener('keyup', e => { if(e.code==='Space'){ spaceDown = false; if(!pan) cv.style.cursor = 'crosshair'; } });
 
 // ---------- random land ----------
 function randomLand(){
@@ -472,6 +499,14 @@ function validMap(o){
   return o && Number.isInteger(o.cols) && Number.isInteger(o.rows) && Array.isArray(o.t) && o.t.length===o.cols*o.rows
     && (o.orient==='flat' || o.orient==='pointy') && typeof o.m==='object' && typeof o.l==='object';
 }
+// A map from a file or from storage may hold terrain or places this version does not know: drop those.
+function cleanMap(m){
+  m.t = m.t.map(x => TBY[x] ? x : '');
+  if(!m.m) m.m = {}; if(!m.l) m.l = {};
+  for(const k in m.m) if(!MARKERS.some(mk => mk[0]===m.m[k])) delete m.m[k];
+  for(const k in m.l) m.l[k] = String(m.l[k]);
+  return m;
+}
 document.getElementById('save').onclick = () => download('hexmap.json', new Blob([JSON.stringify({app:'hex-sketcher', version:1, map:M})], {type:'application/json'}));
 document.getElementById('load').onclick = () => document.getElementById('fileIn').click();
 document.getElementById('fileIn').onchange = e => {
@@ -481,7 +516,7 @@ document.getElementById('fileIn').onchange = e => {
     try{
       const o = JSON.parse(rd.result), m = o.map || o;
       if(!validMap(m)) throw new Error('bad');
-      snap(); M = m; changed(); fitView();
+      snap(); M = cleanMap(m); changed(); fitView();
     }catch(err){ alert('That file is not a Hex Sketcher map.'); }
   };
   rd.readAsText(f); e.target.value = '';
@@ -532,14 +567,30 @@ document.getElementById('style').onchange = e => { setBW(e.target.value==='bw');
 document.getElementById('showSym').onchange = e => { showSym = e.target.checked; changed(); };
 document.getElementById('showNum').onchange = e => { showNum = e.target.checked; changed(); };
 
+
+// ---------- colour theme of the editor (separate from the map style) ----------
+const THEMES = ['orig','bw','wb'], THEME_NAMES = {orig:'Original', bw:'White on black', wb:'Black on white'};
+let theme = 'orig';
+const mono = () => theme !== 'orig';
+function setTheme(t){
+  theme = THEMES.includes(t) ? t : 'orig';
+  document.documentElement.dataset.theme = theme;
+  document.getElementById('bTheme').textContent = THEME_NAMES[theme];
+  try{ localStorage.setItem(STORE_KEY + '.theme', theme); }catch(e){}
+  draw();
+}
+document.getElementById('bTheme').onclick = () => setTheme(THEMES[(THEMES.indexOf(theme)+1) % THEMES.length]);
+
 // ---------- start ----------
 (function init(){
   let loaded = false;
   try{
     const o = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if(o && validMap(o.M)){ M = o.M; showSym = o.showSym !== false; showNum = o.showNum !== false; setBW(!!o.bw); loaded = true; }
+    if(o && validMap(o.M)){ M = cleanMap(o.M); showSym = o.showSym !== false; showNum = o.showNum !== false; setBW(!!o.bw); loaded = true; }
   }catch(e){}
   if(!loaded) randomLand();
+  try{ theme = localStorage.getItem(STORE_KEY + '.theme'); }catch(e){}
+  setTheme(theme);
   syncInputs(); refreshButtons();
   resizeCanvas(); fitView(); persist();
 })();
