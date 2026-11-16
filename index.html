@@ -36,7 +36,7 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair}
 </head>
 <body>
 <aside>
-  <h1>⬡ Hex Sketcher <span style="font-size:11px;color:var(--mut);font-weight:400;letter-spacing:0">v1.2</span></h1>
+  <h1>⬡ Hex Sketcher <span style="font-size:11px;color:var(--mut);font-weight:400;letter-spacing:0">v1.3</span></h1>
 
   <h2>Terrain</h2>
   <div class="grid2" id="terrains"></div>
@@ -83,7 +83,8 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair}
     <b>Fill</b> floods a whole area of the same terrain.<br>
     Pick a place and click a hex to put it there.<br>
     <b>Label</b>: click a hex to name it.<br>
-    <b>Right-click</b> removes a hex's place and label.<br>
+    <b>River</b> / <b>Road</b>: drag from hex to hex to draw one. Right-click a hex to lift it off; <b>Erase</b> clears it too.<br>
+    <b>Right-click</b> (other tools) removes a hex's place and label.<br>
     <b>Pan:</b> right-drag or Space+drag · <b>Zoom:</b> wheel.<br>
     Autosaves in this browser.
   </div>
@@ -109,7 +110,8 @@ const TERRAIN = [
 const TBY = Object.fromEntries(TERRAIN.map(t => [t.id, t]));
 const EMPTY = '#f7f3ea';
 const MARKERS = [['village','Village'],['castle','Castle'],['ruin','Ruin'],['dungeon','Dungeon'],['camp','Camp'],['poi','Point of interest']];
-const TOOLS = [['paint','Paint','B'],['fill','Fill','F'],['erase','Erase','E'],['label','Label','L']];
+const TOOLS = [['paint','Paint','B'],['fill','Fill','F'],['erase','Erase','E'],['label','Label','L'],['river','River','R'],['road','Road','D']];
+const PATHS = ['river','road'];
 const STORE_KEY = 'hexSketcher.v1';
 const SQ3 = Math.sqrt(3);
 let bw = false;
@@ -123,9 +125,9 @@ let terrain = 'plains', tool = 'paint', marker = null, brush = 0;
 let showSym = true, showNum = true;
 let undoStack = [], redoStack = [];
 let R = 26, ox = 30, oy = 30;           // hex radius & view offset (CSS px)
-let hover = null, painting = false, pan = null, spaceDown = false;
+let hover = null, painting = false, pathing = null, pan = null, spaceDown = false;
 
-function blankMap(cols, rows, orient){ return {cols, rows, orient, t: new Array(cols*rows).fill(''), m:{}, l:{}}; }
+function blankMap(cols, rows, orient){ return {cols, rows, orient, t: new Array(cols*rows).fill(''), m:{}, l:{}, p:{river:{}, road:{}}}; }
 const inB = (c,r) => c>=0 && r>=0 && c<M.cols && r<M.rows;
 const id = (c,r) => r*M.cols + c;
 const key = (c,r) => c + ',' + r;
@@ -149,10 +151,63 @@ function pixelToHex(px,py){
   let x, y, q, r;
   if(M.orient==='flat'){ x = px - ox - R; y = py - oy - SQ3*R/2; q = (2/3*x)/R; r = (-1/3*x + SQ3/3*y)/R; }
   else { x = px - ox - SQ3*R/2; y = py - oy - R; q = (SQ3/3*x - 1/3*y)/R; r = (2/3*y)/R; }
+  const a = axRound(q, r);
+  return fromAxial(a.q, a.r);
+}
+function axRound(q,r){
   let s = -q-r, rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
   const dq = Math.abs(rq-q), dr = Math.abs(rr-r), ds = Math.abs(rs-s);
   if(dq>dr && dq>ds) rq = -rr-rs; else if(dr>ds) rr = -rq-rs;
-  return fromAxial(rq, rr);
+  return {q:rq, r:rr};
+}
+function hexDist(a,b){
+  const A = toAxial(a.c,a.r), B = toAxial(b.c,b.r), dq = A.q-B.q, dr = A.r-B.r;
+  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq+dr))/2;
+}
+// the hexes on a straight line from a to b (without a itself); each one touches the one before it
+function hexLine(a,b){
+  const A = toAxial(a.c,a.r), B = toAxial(b.c,b.r), n = hexDist(a,b), out = [];
+  for(let i=1;i<=n;i++){
+    const t = i/n, x = axRound(A.q + (B.q-A.q)*t + 1e-6, A.r + (B.r-A.r)*t + 2e-6);
+    out.push(fromAxial(x.q, x.r));
+  }
+  return out;
+}
+
+// ---------- rivers & roads ----------
+// A river or road is a set of links, each joining two touching hexes: M.p.river["c,r;c,r"] = 1
+function ekey(a,b){
+  const ka = key(a.c,a.r), kb = key(b.c,b.r);
+  return (a.r<b.r || (a.r===b.r && a.c<b.c)) ? ka+';'+kb : kb+';'+ka;
+}
+function eparse(k){ return k.split(';').map(p => { const [c,r] = p.split(',').map(Number); return {c,r}; }); }
+function prunePaths(){ // drop links that left the map or no longer join two touching hexes
+  PATHS.forEach(p => { for(const k in M.p[p]){
+    const [a,b] = eparse(k);
+    if(!(inB(a.c,a.r) && inB(b.c,b.r) && hexDist(a,b)===1)) delete M.p[p][k];
+  } });
+}
+function cutPaths(h, kinds){ // remove every link that touches hex h
+  const hk = key(h.c,h.r); let n = 0;
+  kinds.forEach(p => { for(const k in M.p[p]){ const e = k.split(';'); if(e[0]===hk || e[1]===hk){ delete M.p[p][k]; n++; } } });
+  return n;
+}
+function touchesPath(h, kinds){
+  const hk = key(h.c,h.r);
+  return kinds.some(p => Object.keys(M.p[p]).some(k => { const e = k.split(';'); return e[0]===hk || e[1]===hk; }));
+}
+function pathTo(h){ // extend the river / road being drawn to hex h
+  if(pathing.last){
+    let prev = pathing.last;
+    hexLine(prev, h).forEach(x => {
+      if(inB(x.c,x.r) && inB(prev.c,prev.r)){
+        const k = ekey(prev, x);
+        if(!M.p[tool][k]){ if(!pathing.snapped){ snap(); pathing.snapped = true; } M.p[tool][k] = 1; }
+      }
+      prev = x;
+    });
+  }
+  pathing.last = h;
 }
 const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 function neighbors(c,r){
@@ -281,8 +336,47 @@ function drawMarker(g, m, cx, cy, s){
   }
 }
 
+function buildLinks(){ // for each hex: the neighbours its rivers and roads lead to
+  const L = {};
+  PATHS.forEach(p => { for(const k in M.p[p]){
+    const [a,b] = eparse(k), ka = key(a.c,a.r), kb = key(b.c,b.r);
+    (L[ka] || (L[ka] = {river:[], road:[]}))[p].push(b);
+    (L[kb] || (L[kb] = {river:[], road:[]}))[p].push(a);
+  } });
+  return L;
+}
+// Inside one hex a river / road runs from the middle of one side to the middle of another:
+// a smooth bend when it just passes through, straight spokes to the centre at an end or a fork.
+function tracePath(g, it){
+  g.beginPath();
+  if(it.mids.length===2){ g.moveTo(it.mids[0][0], it.mids[0][1]); g.quadraticCurveTo(it.cx, it.cy, it.mids[1][0], it.mids[1][1]); }
+  else it.mids.forEach(m => { g.moveTo(m[0], m[1]); g.lineTo(it.cx, it.cy); });
+}
+function drawPaths(g, rivers, roads, s){
+  const layer = (items, col, w, dash) => {
+    g.strokeStyle = col; g.lineWidth = w; g.setLineDash(dash || []); g.lineDashOffset = dash ? dash[0]/2 : 0;
+    items.forEach(it => { tracePath(g, it); g.stroke(); });
+  };
+  g.lineJoin = 'round';
+  if(rivers.length){
+    g.lineCap = 'round';
+    if(bw){ layer(rivers,'#fff',s*.36); layer(rivers,'#000',s*.25); layer(rivers,'#fff',s*.11); } // print: a double line
+    else { layer(rivers,'#2f5f8a',s*.27); layer(rivers,'#63a3d6',s*.17); }
+  }
+  if(roads.length){
+    g.lineCap = 'butt';
+    const per = SQ3*s/5, dash = s*.2;   // five dashes across a hex, so the dashes meet cleanly at the sides
+    layer(roads, C('rgba(255,250,240,.9)','#fff'), s*.21);
+    layer(roads, C('#7a4a22','#000'), s*.1, [dash, per-dash]);
+    g.fillStyle = C('#7a4a22','#000');
+    roads.forEach(it => { if(it.mids.length!==2){ g.beginPath(); g.arc(it.cx, it.cy, s*.085, 0, Math.PI*2); g.fill(); } });
+  }
+  g.setLineDash([]); g.lineDashOffset = 0;
+}
+
 function render(g, VW, VH, s, vx, vy, editor){
   g.fillStyle = editor ? ({orig:'#26282e', bw:'#000000', wb:'#e9e9e5'})[theme] : '#ffffff'; g.fillRect(0,0,VW,VH);
+  const links = buildLinks(), vis = [], rivers = [], roads = [];
   for(let r=0;r<M.rows;r++) for(let c=0;c<M.cols;c++){
     const [cx,cy] = center(c,r,s,vx,vy);
     if(cx < -s*2 || cy < -s*2 || cx > VW+s*2 || cy > VH+s*2) continue;
@@ -291,6 +385,14 @@ function render(g, VW, VH, s, vx, vy, editor){
     g.strokeStyle = C('rgba(59,50,38,.45)','#000'); g.lineWidth = Math.max(.8, s*(bw ? .03 : .035)); g.stroke();
     const mk = M.m[key(c,r)];
     if((showSym || bw) && t && !mk) drawSymbol(g, t, cx, cy+ (showNum ? s*.08 : 0), s, c, r);
+    vis.push([c,r,cx,cy]);
+    const lk = links[key(c,r)];
+    if(lk) PATHS.forEach(p => { if(lk[p].length) (p==='river' ? rivers : roads).push({cx, cy,
+      mids: lk[p].map(n => { const [nx,ny] = center(n.c,n.r,s,vx,vy); return [(cx+nx)/2, (cy+ny)/2]; })}); });
+  }
+  drawPaths(g, rivers, roads, s);
+  vis.forEach(([c,r,cx,cy]) => {
+    const mk = M.m[key(c,r)];
     if(mk) drawMarker(g, mk, cx, cy + (showNum ? s*.06 : 0), s);
     if(showNum && s >= 14){
       g.fillStyle = C('rgba(59,50,38,.75)','#000'); g.font = `${Math.round(s*.28)}px ui-monospace,Menlo,monospace`;
@@ -303,7 +405,7 @@ function render(g, VW, VH, s, vx, vy, editor){
       g.lineWidth = 3.5; g.lineJoin = 'round'; g.strokeStyle = 'rgba(255,250,240,.95)';
       g.strokeText(lb, cx, cy + s*.62); g.fillStyle = INK; g.fillText(lb, cx, cy + s*.62);
     }
-  }
+  });
 }
 
 // The map itself is rendered into an off-screen picture (cache) only when it changes.
@@ -353,7 +455,7 @@ function paintAt(h){
   if(!inB(h.c,h.r)) return;
   within(h.c, h.r, brush).forEach(x => {
     const k = key(x.c,x.r);
-    if(tool==='erase'){ M.t[id(x.c,x.r)] = ''; delete M.m[k]; delete M.l[k]; }
+    if(tool==='erase'){ M.t[id(x.c,x.r)] = ''; delete M.m[k]; delete M.l[k]; cutPaths(x, PATHS); }
     else M.t[id(x.c,x.r)] = terrain;
   });
 }
@@ -383,6 +485,7 @@ function clickHex(h, e){
     snap(); if(v.trim()) M.l[k] = v.trim(); else delete M.l[k];
     changed(); return;
   }
+  if(tool==='river' || tool==='road'){ pathing = {last:h, snapped:false}; return; }
   snap(); painting = true; paintAt(h); draw();
 }
 
@@ -407,17 +510,22 @@ window.addEventListener('mousemove', e => {
   if(lastMove && lastMove.c===h.c && lastMove.r===h.r && lastMove.inside===inside) return; // same hex: nothing to redraw
   lastMove = {c:h.c, r:h.r, inside};
   hover = inside ? h : null;
-  if(painting){ paintAt(h); draw(); } else draw(true);
+  if(pathing){ if(inside && inB(h.c,h.r)) pathTo(h); else pathing.last = null; draw(); }
+  else if(painting){ paintAt(h); draw(); } else draw(true);
 });
 let lastMove = null;
 window.addEventListener('mouseup', () => {
   if(pan){
     if(!pan.moved && pan.btn===2 && inB(pan.hex.c,pan.hex.r)){
       const k = key(pan.hex.c,pan.hex.r);
-      if(M.m[k] || M.l[k]){ snap(); delete M.m[k]; delete M.l[k]; changed(); }
+      if(!marker && (tool==='river' || tool==='road')){ // with River / Road: right-click lifts it off this hex
+        if(touchesPath(pan.hex, [tool])){ snap(); cutPaths(pan.hex, [tool]); changed(); }
+      }
+      else if(M.m[k] || M.l[k]){ snap(); delete M.m[k]; delete M.l[k]; changed(); }
     }
     pan = null; cv.style.cursor = spaceDown ? 'grab' : 'crosshair'; draw(); return;
   }
+  if(pathing){ const did = pathing.snapped; pathing = null; if(did) changed(); return; }
   if(painting){ painting = false; changed(); }
 });
 cv.addEventListener('mouseleave', () => { hover = null; lastMove = null; draw(true); });
@@ -444,7 +552,7 @@ function randomLand(){
   const weights = [['plains',5],['forest',4],['hills',3],['mountains',2],['water',2],['swamp',1],['desert',1]];
   const total = weights.reduce((a,w)=>a+w[1],0);
   const pick = () => { let x = Math.random()*total; for(const [t,w] of weights){ if((x-=w)<0) return t; } return 'plains'; };
-  M.t = M.t.map(pick); M.m = {}; M.l = {};
+  M.t = M.t.map(pick); M.m = {}; M.l = {}; M.p = {river:{}, road:{}};
   for(let it=0; it<4; it++){
     const next = M.t.slice();
     for(let r=0;r<M.rows;r++) for(let c=0;c<M.cols;c++){
@@ -479,7 +587,8 @@ function resizeMap(cols, rows){
   for(let r=0;r<Math.min(rows,M.rows);r++) for(let c=0;c<Math.min(cols,M.cols);c++) N.t[r*cols+c] = M.t[id(c,r)];
   for(const k in M.m){ const [c,r] = k.split(',').map(Number); if(c<cols && r<rows) N.m[k] = M.m[k]; }
   for(const k in M.l){ const [c,r] = k.split(',').map(Number); if(c<cols && r<rows) N.l[k] = M.l[k]; }
-  M = N; changed(); fitView();
+  PATHS.forEach(p => { for(const k in M.p[p]) N.p[p][k] = 1; });
+  M = N; prunePaths(); changed(); fitView();
 }
 function syncInputs(){
   document.getElementById('mapC').value = M.cols;
@@ -505,6 +614,10 @@ function cleanMap(m){
   if(!m.m) m.m = {}; if(!m.l) m.l = {};
   for(const k in m.m) if(!MARKERS.some(mk => mk[0]===m.m[k])) delete m.m[k];
   for(const k in m.l) m.l[k] = String(m.l[k]);
+  const p = (m.p && typeof m.p==='object') ? m.p : {};   // maps from before v1.3 have no rivers or roads
+  m.p = {};
+  PATHS.forEach(x => { m.p[x] = {}; const o = p[x];
+    if(o && typeof o==='object') for(const k in o) if(/^\d+,\d+;\d+,\d+$/.test(k)) m.p[x][k] = 1; });
   return m;
 }
 document.getElementById('save').onclick = () => download('hexmap.json', new Blob([JSON.stringify({app:'hex-sketcher', version:1, map:M})], {type:'application/json'}));
@@ -516,7 +629,7 @@ document.getElementById('fileIn').onchange = e => {
     try{
       const o = JSON.parse(rd.result), m = o.map || o;
       if(!validMap(m)) throw new Error('bad');
-      snap(); M = cleanMap(m); changed(); fitView();
+      snap(); M = cleanMap(m); prunePaths(); changed(); fitView();
     }catch(err){ alert('That file is not a Hex Sketcher map.'); }
   };
   rd.readAsText(f); e.target.value = '';
@@ -562,7 +675,7 @@ document.getElementById('clear').onclick = () => { if(confirm('Clear the whole m
 document.getElementById('fit').onclick = fitView;
 document.getElementById('gen').onclick = () => { snap(); randomLand(); changed(); };
 document.getElementById('resize').onclick = () => resizeMap(+document.getElementById('mapC').value, +document.getElementById('mapR').value);
-document.getElementById('orient').onchange = e => { snap(); M.orient = e.target.value; changed(); fitView(); };
+document.getElementById('orient').onchange = e => { snap(); M.orient = e.target.value; prunePaths(); changed(); fitView(); };
 document.getElementById('style').onchange = e => { setBW(e.target.value==='bw'); changed(); };
 document.getElementById('showSym').onchange = e => { showSym = e.target.checked; changed(); };
 document.getElementById('showNum').onchange = e => { showNum = e.target.checked; changed(); };
@@ -586,7 +699,7 @@ document.getElementById('bTheme').onclick = () => setTheme(THEMES[(THEMES.indexO
   let loaded = false;
   try{
     const o = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if(o && validMap(o.M)){ M = cleanMap(o.M); showSym = o.showSym !== false; showNum = o.showNum !== false; setBW(!!o.bw); loaded = true; }
+    if(o && validMap(o.M)){ M = cleanMap(o.M); prunePaths(); showSym = o.showSym !== false; showNum = o.showNum !== false; setBW(!!o.bw); loaded = true; }
   }catch(e){}
   if(!loaded) randomLand();
   try{ theme = localStorage.getItem(STORE_KEY + '.theme'); }catch(e){}
