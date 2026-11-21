@@ -32,6 +32,14 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair}
 #status{position:absolute;bottom:8px;left:10px;background:var(--stat-bg);padding:4px 9px;border-radius:4px;font-size:12px;color:var(--stat-tx);pointer-events:none}
 .help{font-size:12px;color:var(--mut);line-height:1.55}
 .help b{color:var(--txt);font-weight:600}
+/* hex name dialog (window.prompt does not work inside the Mac app) */
+#nameDlg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:10}
+#nameDlg.show{display:flex}
+#nameDlg .box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px;width:340px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+#nameDlg .box label{display:block;color:var(--mut);font-size:12px;margin-bottom:6px}
+#nameDlg input{width:100%;background:var(--field);color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:6px 8px;font:inherit}
+#nameDlg .row{justify-content:flex-end;margin-top:12px}
+#nameDlg .row button{flex:0 0 auto;padding:6px 14px}
 </style>
 </head>
 <body>
@@ -89,6 +97,11 @@ canvas{display:block;width:100%;height:100%;cursor:crosshair}
     Autosaves in this browser.
   </div>
 </aside>
+<div id="nameDlg"><div class="box">
+  <label for="nameIn">Hex name (empty = remove)</label>
+  <input type="text" id="nameIn" autocomplete="off" spellcheck="false">
+  <div class="row"><button id="nameCancel">Cancel</button><button id="nameOk" class="on">OK</button></div>
+</div></div>
 <main>
   <canvas id="cv"></canvas>
   <div id="status"></div>
@@ -480,10 +493,12 @@ function clickHex(h, e){
   }
   if(tool==='fill'){ floodFill(h); return; }
   if(tool==='label'){
-    const v = prompt('Hex name (empty = remove):', M.l[k] || '');
-    if(v===null) return;
-    snap(); if(v.trim()) M.l[k] = v.trim(); else delete M.l[k];
-    changed(); return;
+    askText(M.l[k] || '').then(v => {
+      if(v===null) return;
+      snap(); if(v.trim()) M.l[k] = v.trim(); else delete M.l[k];
+      changed();
+    });
+    return;
   }
   if(tool==='river' || tool==='road'){ pathing = {last:h, snapped:false}; return; }
   snap(); painting = true; paintAt(h); draw();
@@ -640,6 +655,21 @@ document.getElementById('png').onclick = () => {
   render(c.getContext('2d'), c.width, c.height, s, pad, pad, false);
   c.toBlob(b => download('hexmap.png', b), 'image/png');
 };
+
+// ---------- hex name dialog ----------
+function askText(initial){
+  return new Promise(res => {
+    const dlg = document.getElementById('nameDlg'), inp = document.getElementById('nameIn');
+    const ok = document.getElementById('nameOk'), no = document.getElementById('nameCancel');
+    const done = v => { dlg.classList.remove('show'); ok.onclick = no.onclick = inp.onkeydown = dlg.onmousedown = null; res(v); };
+    ok.onclick = () => done(inp.value);
+    no.onclick = () => done(null);
+    dlg.onmousedown = e => { if(e.target===dlg) done(null); };
+    inp.onkeydown = e => { if(e.key==='Enter'){ e.preventDefault(); done(inp.value); } else if(e.key==='Escape'){ e.preventDefault(); done(null); } };
+    inp.value = initial || ''; dlg.classList.add('show');
+    setTimeout(() => { inp.focus(); inp.select(); }, 0);
+  });
+}
 
 // ---------- UI ----------
 function setTerrain(t){ terrain = t; if(tool!=='paint' && tool!=='fill') tool = 'paint'; setMarker(null); refreshButtons(); }
